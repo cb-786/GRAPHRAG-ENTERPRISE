@@ -12,17 +12,15 @@ class Settings(BaseSettings):
         "http://localhost:5173",
     ]
 
-    # ── Iteration 2: Graph DB ──────────────────────────────────────────────
+    # ── Iteration 2: LLM ──────────────────────────────────────────────────────
+    GEMINI_API_KEY: str = ""
+    LLM_MODEL: str = "gemini-2.5-flash"
+
+    # ── Iteration 3: Graph DB + Cache ─────────────────────────────────────────
     NEO4J_URI: str = "bolt://neo4j:7687"
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "password"
-
-    # ── Iteration 2: Cache ────────────────────────────────────────────────
     REDIS_URL: str = "redis://redis:6379"
-
-    # ── Iteration 3: LLM ──────────────────────────────────────────────────
-    OPENAI_API_KEY: str = ""
-    LLM_MODEL: str = "gpt-4o"
 
     class Config:
         env_file = ".env"
