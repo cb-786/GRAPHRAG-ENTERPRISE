@@ -19,8 +19,7 @@ class Settings(BaseSettings):
     # ── Iteration 3: Graph DB + Cache ─────────────────────────────────────────
     NEO4J_URI: str = "bolt://neo4j:7687"
     NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "password"
-    REDIS_URL: str = "redis://redis:6379"
+    NEO4J_PASSWORD: str = "changeme"
 
     class Config:
         env_file = ".env"
@@ -28,3 +27,14 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+
+
+
+
+
+
+
+
+
