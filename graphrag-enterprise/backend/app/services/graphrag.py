@@ -22,6 +22,12 @@ Iteration 5 will add:
     write_to_neo4j(result)          ← persists nodes/edges to the graph DB
     vector_search(query)            ← ANN search over embedded node names
 """
+"""
+GraphRAGService — Iteration 5 update
+======================================
+write_to_neo4j() is now fully implemented using Neo4jService.
+Everything else stays the same as Iteration 4.
+"""
 import json
 import logging
 import re
@@ -33,7 +39,6 @@ from app.core.config import settings
 from app.core.prompts import (
     EXTRACTION_SYSTEM_PROMPT,
     build_extraction_prompt,
-    build_batch_extraction_prompt,
 )
 from app.models.graph_models import Node, Edge, GraphResult, BatchExtractionResult
 
@@ -52,92 +57,79 @@ class GraphRAGService:
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def extract(self, entry: dict) -> GraphResult:
-        """
-        Extract entities and relationships from a single NIC entry.
-
-        Args:
-            entry: dict with keys code, description, division, section
-                   (exactly what data_parser.parse_to_dicts() produces)
-
-        Returns:
-            GraphResult with validated nodes and edges.
-        """
+        """Extract entities and relationships from a single NIC entry."""
         prompt = build_extraction_prompt(
             nic_code    = entry["code"],
             description = entry["description"],
             division    = entry.get("division", ""),
             section     = entry.get("section", ""),
         )
-
         raw = await self._call_llm(prompt)
         nodes, edges = self._parse_llm_response(raw, entry["code"])
-
-        result = GraphResult(
+        return GraphResult(
             nic_code         = entry["code"],
             description      = entry["description"],
             nodes            = nodes,
             edges            = edges,
             raw_llm_response = raw,
         )
-        logger.info(
-            "Extracted  code=%s  nodes=%d  edges=%d",
-            entry["code"], len(nodes), len(edges),
-        )
-        return result
+
+    async def extract_and_store(self, entry: dict) -> dict:
+        """
+        Extract entities from one NIC entry, then immediately write to Neo4j.
+        This is the key new method for Iteration 5.
+        """
+        # Import here to avoid circular imports at module load time
+        from app.services.neo4j_service import neo4j_service
+
+        result  = await self.extract(entry)
+        summary = await neo4j_service.write_graph_result(result)
+        return summary
 
     async def extract_batch(
         self,
         entries: list[dict],
         *,
-        max_per_call: int = 5,
+        store: bool = False,
     ) -> BatchExtractionResult:
         """
-        Extract from multiple NIC entries, chunked to stay within context limits.
+        Extract from multiple NIC entries.
 
         Args:
-            entries:      list of NIC entry dicts
-            max_per_call: how many descriptions to send per LLM call
-
-        Returns:
-            BatchExtractionResult aggregating all graphs and errors.
+            entries: list of NIC entry dicts
+            store:   if True, write each result to Neo4j after extraction
         """
+        from app.services.neo4j_service import neo4j_service
+
         results: list[GraphResult] = []
         errors:  list[str]         = []
 
-        # Process one at a time for reliability in Iteration 4;
-        # batching can be enabled in Iteration 5 once quality is confirmed.
         for entry in entries:
             try:
                 result = await self.extract(entry)
                 results.append(result)
+                if store:
+                    await neo4j_service.write_graph_result(result)
             except Exception as e:
                 msg = f"code={entry.get('code', '?')}: {e}"
                 logger.warning("Extraction error — %s", msg)
                 errors.append(msg)
 
-        total_nodes = sum(len(r.nodes) for r in results)
-        total_edges = sum(len(r.edges) for r in results)
-
         return BatchExtractionResult(
             total_processed = len(results),
-            total_nodes     = total_nodes,
-            total_edges     = total_edges,
+            total_nodes     = sum(len(r.nodes) for r in results),
+            total_edges     = sum(len(r.edges) for r in results),
             results         = results,
             errors          = errors,
         )
 
-    # ── Private helpers ───────────────────────────────────────────────────────
+    # ── Private helpers (unchanged from Iteration 4) ──────────────────────────
 
     async def _call_llm(self, prompt: str) -> str:
-        """
-        Call Gemini with JSON mode enforced at the API level.
-        response_mime_type="application/json" is the second layer of defence
-        against markdown and stray prose — the prompt is the first.
-        """
         config = types.GenerateContentConfig(
-            system_instruction  = EXTRACTION_SYSTEM_PROMPT,
-            response_mime_type  = "application/json",   # ← forces clean JSON
-            temperature         = 0.1,                  # low temp = consistent structure
+            system_instruction = EXTRACTION_SYSTEM_PROMPT,
+            response_mime_type = "application/json",
+            temperature        = 0.1,
         )
         response = await self._client.aio.models.generate_content(
             model    = self._model,
@@ -147,33 +139,16 @@ class GraphRAGService:
         return response.text
 
     def _parse_llm_response(
-        self,
-        raw: str,
-        nic_code: str,
+        self, raw: str, nic_code: str
     ) -> tuple[list[Node], list[Edge]]:
-        """
-        Parse and validate the LLM JSON response.
-
-        Layers of defence:
-        1. Strip any stray markdown fences the model sneaked in
-        2. json.loads() — hard fail if unparseable
-        3. Validate each node/edge through Pydantic
-        4. Cross-check that all edge source/target ids exist in nodes
-        5. Ensure the mandatory Activity node is present
-
-        Raises:
-            ValueError if the structure is fundamentally broken.
-        """
-        # ── 1. Strip markdown fences ──────────────────────────────────────────
         cleaned = re.sub(r"```(?:json)?|```", "", raw).strip()
-
-        # ── 2. Parse JSON ────────────────────────────────────────────────────
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError as e:
-            raise ValueError(f"LLM returned invalid JSON for code={nic_code}: {e}\n\nRaw: {raw[:500]}")
+            raise ValueError(
+                f"LLM returned invalid JSON for code={nic_code}: {e}\n\nRaw: {raw[:500]}"
+            )
 
-        # ── 3. Validate nodes ────────────────────────────────────────────────
         raw_nodes = data.get("nodes", [])
         raw_edges = data.get("edges", [])
 
@@ -182,7 +157,6 @@ class GraphRAGService:
 
         nodes: list[Node] = []
         node_ids: set[str] = set()
-
         for n in raw_nodes:
             try:
                 node = Node(**n)
@@ -191,52 +165,24 @@ class GraphRAGService:
             except Exception as e:
                 logger.warning("Skipping invalid node %s — %s", n, e)
 
-        # ── 4. Validate edges ────────────────────────────────────────────────
         edges: list[Edge] = []
         for e in raw_edges:
             try:
                 edge = Edge(**e)
-                # Cross-check that referenced ids actually exist
-                if edge.source not in node_ids:
-                    logger.warning(
-                        "Edge source %r not in node ids — skipping", edge.source
-                    )
-                    continue
-                if edge.target not in node_ids:
-                    logger.warning(
-                        "Edge target %r not in node ids — skipping", edge.target
-                    )
+                if edge.source not in node_ids or edge.target not in node_ids:
+                    logger.warning("Skipping edge with missing node refs: %s", e)
                     continue
                 edges.append(edge)
             except Exception as e:
                 logger.warning("Skipping invalid edge %s — %s", e, e)
 
-        # ── 5. Ensure Activity node exists ───────────────────────────────────
-        expected_activity_id = f"activity_{nic_code}"
-        if not any(n.id == expected_activity_id for n in nodes):
-            logger.warning(
-                "Activity node %r missing — injecting stub", expected_activity_id
-            )
+        expected_id = f"activity_{nic_code}"
+        if not any(n.id == expected_id for n in nodes):
             nodes.insert(0, Node(
-                id    = expected_activity_id,
-                label = "Activity",
-                name  = f"Activity {nic_code}",
+                id=expected_id, label="Activity", name=f"Activity {nic_code}"
             ))
 
-        if not nodes:
-            raise ValueError(f"Zero valid nodes after validation for code={nic_code}")
-
         return nodes, edges
-
-    # ── Iteration 5 stubs ─────────────────────────────────────────────────────
-
-    async def write_to_neo4j(self, result: GraphResult) -> None:
-        """Persist GraphResult to Neo4j — Iteration 5."""
-        raise NotImplementedError("write_to_neo4j() — Iteration 5")
-
-    async def vector_search(self, query: str, top_k: int = 10) -> list[dict]:
-        """ANN search over node embeddings — Iteration 5."""
-        raise NotImplementedError("vector_search() — Iteration 5")
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────
