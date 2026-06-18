@@ -195,6 +195,7 @@ class Neo4jService:
     async def get_node_by_id(self, node_id: str) -> dict | None:
         """
         Retrieve a single node by its id property.
+bind = Super+Shift, S, exec, hyprshot -m output -o ~/Pictures/Screenshots # Capture region (freeze)
 
         Cypher explanation:
             MATCH (n {id: $id})  finds any node (any label) with this id.
@@ -234,6 +235,7 @@ class Neo4jService:
         driver = self._require_driver()
         async with driver.session() as session:
             result = await session.run(cypher, id=activity_id)
+
             record = await result.single()
 
         if record is None:
@@ -312,17 +314,41 @@ class Neo4jService:
             result = await session.run(cypher)
             return await result.data()
 
-    async def semantic_search(self, query_embedding: list[float], top_k: int = 5) -> list[dict]:
-        """Queries the vector index for semantically similar Activity nodes."""
+    async def search_semantic_with_context(self, query_embedding: list[float], top_k: int = 3) -> list[dict]:
+        """
+        Iteration 7 (GraphRAG):
+        Finds the top semantic matches and traverses their immediate graph neighborhood (1-hop)
+        to pull broader, narrower, and related industry contexts.
+        """
         cypher = """
         CALL db.index.vector.queryNodes('activity_embeddings', $top_k, $query_embedding)
-        YIELD node, score
-        RETURN node.id AS id, node.name AS name, score
+        YIELD node AS primaryNode, score
+        
+        // Traverse the graph neighborhood 1 hop out to gather context
+        OPTIONAL MATCH (primaryNode)-[r]-(neighbor)
+        
+        // Group the graph context elements
+        WITH primaryNode, score, 
+             collect(DISTINCT {
+                 relationship: type(r), 
+                 node_label: labels(neighbor)[0],
+                 node_name: neighbor.name,
+                 node_id: neighbor.id
+             }) AS graph_context
+             
+        RETURN {
+            id: primaryNode.id,
+            name: primaryNode.name,
+            score: score,
+            context_neighborhood: [c IN graph_context WHERE c.node_id IS NOT NULL]
+        } AS result
         """
         driver = self._require_driver()
         async with driver.session() as session:
             result = await session.run(cypher, top_k=top_k, query_embedding=query_embedding)
-            return await result.data()
+            records = await result.data()
+            return [record["result"] for record in records]
+
 
     # ── Pass Condition helper ─────────────────────────────────────────────────
 

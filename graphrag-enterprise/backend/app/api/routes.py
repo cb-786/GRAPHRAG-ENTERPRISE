@@ -249,9 +249,10 @@ async def search_semantic(q: str = Query(..., min_length=3, description="Semanti
         # 1. Convert user text into a 768-dim vector
         query_vector = await llm_service.generate_embedding(q)
         
-        # 2. Search Neo4j via vector index
-        results = await neo4j_service.semantic_search(query_vector, top_k=3)
-        
+                
+        # 2. Search Neo4j via vector index AND traverse for context (GraphRAG)
+        results = await neo4j_service.search_semantic_with_context(query_vector, top_k=3)   
+             
         if not results:
             return {
                 "status": "success", 
