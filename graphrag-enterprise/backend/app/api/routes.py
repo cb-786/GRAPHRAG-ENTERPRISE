@@ -271,3 +271,47 @@ async def search_semantic(q: str = Query(..., min_length=3, description="Semanti
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Semantic search error: {e}")
+
+
+@router.get("/search/rag")
+async def search_rag(q: str = Query(..., min_length=3, description="Full GraphRAG classification query")):
+    """
+    Iteration 8 Pass Condition.
+    1. Embeds the user query.
+    2. Retrieves the semantic graph neighborhood from Neo4j.
+    3. Passes the graph context to the LLM.
+    4. Returns a human-readable, synthesized classification explanation.
+
+    curl "http://localhost/api/v1/search/rag?q=making%20clothes" | python3 -m json.tool
+    """
+    try:
+        # Step 1: Embed the query
+        query_vector = await llm_service.generate_embedding(q)
+        
+        # Step 2: Traverse the Graph for context (using Iteration 7 method)
+        graph_results = await neo4j_service.search_semantic_with_context(query_vector, top_k=3)
+        
+        if not graph_results:
+            return {
+                "status": "success",
+                "query": q,
+                "classification": None,
+                "message": "No graph context found in the database."
+            }
+
+        # Step 3: Pass context to the LLM for synthesis
+        classification_result = await llm_service.synthesize_graphrag_context(
+            query=q, 
+            graph_context=graph_results
+        )
+        
+        # Step 4: Return the final RAG payload
+        return {
+            "status": "success",
+            "query": q,
+            "classification": classification_result,
+            "raw_graph_context_used": graph_results  # Optional: keep this to show the frontend what the LLM saw
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"GraphRAG synthesis error: {e}")
