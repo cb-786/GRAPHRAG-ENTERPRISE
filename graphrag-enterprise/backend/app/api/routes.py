@@ -234,3 +234,39 @@ async def graph_stats():
         return await neo4j_service.get_stats()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Neo4j stats error: {e}")
+
+# ── Iteration 6 ───────────────────────────────────────────────────────────────
+
+@router.get("/search/semantic")
+async def search_semantic(q: str = Query(..., min_length=3, description="Semantic search query")):
+    """
+    Iteration 6 Pass Condition.
+    Takes a natural language query, embeds it, and retrieves the closest NIC Activity matches.
+
+    curl "http://localhost/api/v1/search/semantic?q=making%20clothes" | python3 -m json.tool
+    """
+    try:
+        # 1. Convert user text into a 768-dim vector
+        query_vector = await llm_service.generate_embedding(q)
+        
+        # 2. Search Neo4j via vector index
+        results = await neo4j_service.semantic_search(query_vector, top_k=3)
+        
+        if not results:
+            return {
+                "status": "success", 
+                "query": q, 
+                "matches": 0, 
+                "data": [], 
+                "message": "No matches found. Did you run the hydration script?"
+            }
+            
+        return {
+            "status": "success", 
+            "query": q,
+            "matches": len(results),
+            "data": results
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Semantic search error: {e}")

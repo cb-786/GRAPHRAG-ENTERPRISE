@@ -46,6 +46,7 @@ class Neo4jService:
 
         # Create indexes on first connect so lookups are fast
         await self._create_indexes()
+        await self._create_vector_index()
 
     async def disconnect(self) -> None:
         """Close the driver. Called at app shutdown."""
@@ -89,6 +90,28 @@ class Neo4jService:
             for cypher in constraints:
                 await session.run(cypher)
         logger.info("Neo4j indexes/constraints verified")
+
+
+
+    async def _create_vector_index(self) -> None:
+        """
+        Iteration 6: Creates a cosine-similarity vector index on Activity nodes.
+        Safe to run multiple times — IF NOT EXISTS is idempotent.
+        """
+        cypher = """
+        CREATE VECTOR INDEX activity_embeddings IF NOT EXISTS
+        FOR (a:Activity) ON (a.embedding)
+        OPTIONS {
+            indexConfig: {
+                `vector.dimensions`: 768,
+                `vector.similarity_function`: 'cosine'
+            }
+        }
+        """
+        driver = self._require_driver()
+        async with driver.session() as session:
+            await session.run(cypher)
+        logger.info("Neo4j vector index 'activity_embeddings' verified")    
 
     # ── Write ─────────────────────────────────────────────────────────────────
 
@@ -264,45 +287,72 @@ class Neo4jService:
             "total_edges": record["total_edges"] if record else 0,
         }
 
+
+    # ── Iteration 6: Vector Search & Hydration Methods ────────────────────────
+
+    async def update_activity_embedding(self, activity_id: str, embedding: list[float]) -> None:
+        """Upserts a vector embedding into an existing Activity node."""
+        cypher = """
+        MATCH (a:Activity {id: $id})
+        SET a.embedding = $embedding
+        """
+        driver = self._require_driver()
+        async with driver.session() as session:
+            await session.run(cypher, id=activity_id, embedding=embedding)
+
+    async def get_activities_without_embeddings(self) -> list[dict]:
+        """Fetches nodes that need vectorization for the hydration script."""
+        cypher = """
+        MATCH (a:Activity)
+        WHERE a.embedding IS NULL
+        RETURN a.id AS id, a.name AS name
+        """
+        driver = self._require_driver()
+        async with driver.session() as session:
+            result = await session.run(cypher)
+            return await result.data()
+
+    async def semantic_search(self, query_embedding: list[float], top_k: int = 5) -> list[dict]:
+        """Queries the vector index for semantically similar Activity nodes."""
+        cypher = """
+        CALL db.index.vector.queryNodes('activity_embeddings', $top_k, $query_embedding)
+        YIELD node, score
+        RETURN node.id AS id, node.name AS name, score
+        """
+        driver = self._require_driver()
+        async with driver.session() as session:
+            result = await session.run(cypher, top_k=top_k, query_embedding=query_embedding)
+            return await result.data()
+
     # ── Pass Condition helper ─────────────────────────────────────────────────
 
     async def test_write_and_read(self) -> dict:
-        """
-        Insert a dummy node + edge and immediately retrieve them.
-        This is the exact pass condition for Iteration 5.
-        Cleans up after itself.
-        """
         driver = self._require_driver()
-
-        # Write dummy data
         async with driver.session() as session:
             await session.run("""
                 MERGE (a:TestNode {id: 'test_node_a', name: 'Test Node A'})
                 MERGE (b:TestNode {id: 'test_node_b', name: 'Test Node B'})
                 MERGE (a)-[:TEST_RELATION]->(b)
             """)
-
-        # Read it back
         async with driver.session() as session:
             result = await session.run("""
                 MATCH (a:TestNode {id: 'test_node_a'})-[r:TEST_RELATION]->(b:TestNode)
                 RETURN a.name AS a_name, type(r) AS rel, b.name AS b_name
             """)
             record = await result.single()
-
-        # Clean up
         async with driver.session() as session:
             await session.run("MATCH (n:TestNode) DETACH DELETE n")
 
         if record is None:
-            raise RuntimeError("Write succeeded but read returned nothing — check Neo4j")
+            raise RuntimeError("Write succeeded but read failed")
 
         return {
-            "wrote":     "TestNode A -[:TEST_RELATION]-> TestNode B",
+            "wrote": "TestNode A -[:TEST_RELATION]-> TestNode B",
             "retrieved": f"{record['a_name']} -[{record['rel']}]-> {record['b_name']}",
-            "status":    "PASS",
+            "status": "PASS",
         }
 
+    
 
 # ── Module-level singleton ────────────────────────────────────────────────────
 neo4j_service = Neo4jService()

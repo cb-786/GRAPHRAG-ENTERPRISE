@@ -26,8 +26,6 @@ class LLMService:
         if not settings.GEMINI_API_KEY:
             raise ValueError(
                 "GEMINI_API_KEY is not set. "
-                "Get a key at https://aistudio.google.com/app/apikey "
-                "and add it to backend/.env"
             )
         self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self._model  = settings.LLM_MODEL
@@ -84,6 +82,22 @@ class LLMService:
             contents=contents,
         )
         return response.text
+
+        # ── Iteration 6 ───────────────────────────────────────────────────────────
+    
+    async def generate_embedding(self, text: str) -> list[float]:
+        """
+        Generates a 768-dimensional vector embedding for the input text.
+        Uses the modern gemini-embedding-2 model truncated to 768 dimensions
+        to match our Neo4j vector index constraints.
+        """
+        logger.debug("LLM Embed ▶ text=%.50s...", text)
+        response = await self._client.aio.models.embed_content(
+            model='gemini-embedding-2',
+            contents=text,
+            config=types.EmbedContentConfig(output_dimensionality=768)
+        )
+        return response.embeddings[0].values
 
     # ── Iteration 4 stub ──────────────────────────────────────────────────────
 
