@@ -3,6 +3,7 @@ LLMService — Google Gemini API wrapper.
 Iteration 2: wire up the LLM connection using the google-genai SDK.
 """
 import logging
+import json
 from google import genai
 from google.genai import types
 from app.core.config import settings
@@ -99,11 +100,52 @@ class LLMService:
         )
         return response.embeddings[0].values
 
-    # ── Iteration 4 stub ──────────────────────────────────────────────────────
-
-    async def classify(self, description: str, context: list) -> dict:
-        """NIC code classification with GraphRAG context — implemented in Iteration 4."""
-        raise NotImplementedError("LLMService.classify() — Iteration 4")
+    async def synthesize_graphrag_context(self, query: str, graph_context: list[dict]) -> dict:
+        """
+        Iteration 8: Takes the user query and the retrieved Neo4j GraphRAG context,
+        and asks the Gemini model to synthesize a final classification explanation.
+        Forces the model to output strict JSON.
+        """
+        # 1. Format the graph data into a readable string for the LLM prompt
+        context_str = json.dumps(graph_context, indent=2)
+        
+        # 2. Build the RAG prompt
+        system_instruction = (
+            "You are GovIntel.AI, an expert B2G semantic classification agent. "
+            "Your job is to match the user's business description to the correct National "
+            "Industrial Classification (NIC) code using ONLY the provided graph database context.\n\n"
+            "Rules:\n"
+            "1. Analyze the user's query against the provided graph context.\n"
+            "2. Select the most relevant NIC activity from the context.\n"
+            "3. Write a clear explanation of WHY this code matches, explicitly citing "
+            "the related processes, products, or sectors found in the graph neighborhood.\n"
+            "4. Return ONLY a valid JSON object with the keys: 'nic_code', 'activity_name', and 'explanation'. "
+            "Do not use markdown formatting like ```json ... ```. Output raw JSON only."
+        )
+        
+        user_prompt = f"User Query: {query}\n\nRetrieved Graph Context:\n{context_str}"
+        
+        # 3. Call the LLM (using your existing complete method logic, but adapted for JSON)
+        try:
+            # Note: Depending on your exact gemini SDK version in complete(), you might be 
+            # able to pass generation_config={"response_mime_type": "application/json"}.
+            # We enforce it via the system prompt to be safe.
+            raw_response = await self.complete(
+                prompt=user_prompt, 
+                system=system_instruction
+            )
+            
+            # Clean up the response just in case the LLM wrapped it in markdown code blocks
+            clean_json = raw_response.strip().removeprefix("```json").removesuffix("```").strip()
+            return json.loads(clean_json)
+            
+        except Exception as e:
+            # Fallback if the LLM fails or returns invalid JSON
+            return {
+                "nic_code": "ERROR",
+                "activity_name": "Synthesis Failed",
+                "explanation": f"Failed to synthesize graph context: {str(e)}"
+            }
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────
