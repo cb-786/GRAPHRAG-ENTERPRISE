@@ -19,3 +19,4 @@ pandas>=2.2.0
 
 # ── Iteration 5: Neo4j graph database ─────────────────────────────────────────
 neo4j>=5.20.0
+redis>=5.0.1

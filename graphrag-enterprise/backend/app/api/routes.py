@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from pathlib import Path
 from datetime import datetime, timezone
+import logging
 
 from app.services.llm import llm_service
 from app.services.graphrag import graphrag_service
@@ -9,6 +10,7 @@ from app.services.neo4j_service import neo4j_service
 from app.core.data_parser import parse_nic_csv, parse_to_dicts
 from app.models.nic_code import ParseResult
 from app.models.graph_models import GraphResult, BatchExtractionResult
+from app.services.cache import cache_service
 
 router   = APIRouter(prefix="/v1", tags=["v1"])
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
@@ -276,14 +278,24 @@ async def search_semantic(q: str = Query(..., min_length=3, description="Semanti
 @router.get("/search/rag")
 async def search_rag(q: str = Query(..., min_length=3, description="Full GraphRAG classification query")):
     """
-    Iteration 8 Pass Condition.
-    1. Embeds the user query.
-    2. Retrieves the semantic graph neighborhood from Neo4j.
-    3. Passes the graph context to the LLM.
-    4. Returns a human-readable, synthesized classification explanation.
-
-    curl "http://localhost/api/v1/search/rag?q=making%20clothes" | python3 -m json.tool
+    Iteration 9 Pass Condition.
+    1. Slugs the incoming query to use as a Redis key.
+    2. Intercepts with a cache check. If hit, skips embeddings, Neo4j, and Gemini entirely.
+    3. On cache miss, processes full GraphRAG pipeline and stores result.
     """
+    # Create a sanitized, predictable cache key
+    cache_key = f"rag_search:{q.strip().lower()}"
+    
+    # ── 1. CHECK THE CACHE ───────────────────────────────────────────────────
+    cached_response = await cache_service.get(cache_key)
+    if cached_response:
+        # logger.info(f"🚀 [CACHE HIT] Returning response instantly for query: '{q}'")
+        # Mark the payload so you can explicitly see it came from Redis during testing
+        cached_response["cached"] = True
+        return cached_response
+
+    # ── 2. CACHE MISS -> EXECUTE FULL PIPELINE ───────────────────────────────
+    # logger.info(f"⏳ [CACHE MISS] Fetching embedding, graph, and LLM synthesis for query: '{q}'")
     try:
         # Step 1: Embed the query
         query_vector = await llm_service.generate_embedding(q)
@@ -296,7 +308,8 @@ async def search_rag(q: str = Query(..., min_length=3, description="Full GraphRA
                 "status": "success",
                 "query": q,
                 "classification": None,
-                "message": "No graph context found in the database."
+                "message": "No graph context found in the database.",
+                "cached": False
             }
 
         # Step 3: Pass context to the LLM for synthesis
@@ -305,13 +318,20 @@ async def search_rag(q: str = Query(..., min_length=3, description="Full GraphRA
             graph_context=graph_results
         )
         
-        # Step 4: Return the final RAG payload
-        return {
+        # Construct response schema
+        final_response = {
             "status": "success",
             "query": q,
             "classification": classification_result,
-            "raw_graph_context_used": graph_results  # Optional: keep this to show the frontend what the LLM saw
+            "raw_graph_context_used": graph_results,
+            "cached": False
         }
+        
+        # ── 3. WRITE TO REDIS CACHE ──────────────────────────────────────────
+        # Cache the result for 3600 seconds (1 hour)
+        await cache_service.set(cache_key, final_response, ttl=3600)
+        
+        return final_response
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"GraphRAG synthesis error: {e}")
