@@ -1,5 +1,6 @@
-/** Base URL is always relative — Nginx proxies /api/* → backend */
-const BASE = "/api";
+/** Base URL is configurable via VITE_API_URL, defaulting to /api for Nginx/Vite proxy */
+export const API_BASE = import.meta.env.VITE_API_URL || "/api";
+const BASE = API_BASE;
 
 /**
  * Wraps fetch with shared error handling.

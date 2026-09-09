@@ -11,5 +11,5 @@ COPY . .
 
 EXPOSE 8000
 
-# --reload watches for file changes when the source is volume-mounted
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Uses PORT if provided by cloud host (Render, Koyeb, etc), defaults to 8000
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

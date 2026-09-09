@@ -1,12 +1,63 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
-    <script src="https://cdn.tailwindcss.com"></script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NIC Code Classification</title>
+    <title>GovIntel.AI | Enterprise GraphRAG & Knowledge Graph Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              display: ['Outfit', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+            },
+            colors: {
+              space: {
+                950: '#060911',
+                900: '#0B0F19',
+                850: '#111726',
+                800: '#182035',
+                750: '#1E2842',
+                700: '#253252',
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      body {
+        margin: 0;
+        background-color: #060911;
+        color: #F1F5F9;
+        font-family: 'Inter', sans-serif;
+        overflow-x: hidden;
+      }
+      /* Custom dark scrollbar */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #0B0F19;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #253252;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #3B4E78;
+      }
+    </style>
   </head>
-  <body>
+  <body class="bg-[#060911] text-slate-100 min-h-screen">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
