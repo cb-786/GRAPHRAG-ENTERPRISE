@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # ── Iteration 2: LLM ──────────────────────────────────────────────────────
     GEMINI_API_KEY: str = ""
-    LLM_MODEL: str = "gemini-2.5-flash"
+    LLM_MODEL: str = "gemini-3.6-flash"
 
     # ── Iteration 3: Graph DB + Cache ─────────────────────────────────────────
     NEO4J_URI: str = "bolt://neo4j:7687"

@@ -57,8 +57,12 @@ class Edge(BaseModel):
 
     @field_validator("type")
     @classmethod
-    def upper_case_type(cls, v: str) -> str:
-        return v.upper()
+    def strict_edge_type(cls, v: str) -> str:
+        v_upper = v.upper()
+        allowed = {"PRODUCES", "USES", "BELONGS_TO", "INVOLVES", "RELATED_TO", "PART_OF"}
+        if v_upper not in allowed:
+            raise ValueError(f"Edge type must be one of {allowed}, got {v_upper!r}")
+        return v_upper
 
 
 class GraphResult(BaseModel):

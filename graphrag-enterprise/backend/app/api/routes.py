@@ -237,6 +237,29 @@ async def graph_stats():
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Neo4j stats error: {e}")
 
+
+@router.get("/graph/topology")
+async def graph_topology(limit: int = Query(150, ge=1, le=500, description="Max nodes to fetch")):
+    """
+    Fetches a snapshot of nodes and relationships formatted for interactive graph visualization.
+    """
+    try:
+        return await neo4j_service.get_topology(limit=limit)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Neo4j topology error: {e}")
+
+
+@router.get("/graph/node/{node_id}/neighbors")
+async def graph_node_neighbors(node_id: str):
+    """
+    Fetches 1-hop connected neighbors for expanding a node in the interactive graph.
+    """
+    try:
+        return await neo4j_service.get_node_neighbors(node_id=node_id)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Neo4j neighbor query error: {e}")
+
+
 # ── Iteration 6 ───────────────────────────────────────────────────────────────
 
 @router.get("/search/semantic")

@@ -195,7 +195,6 @@ class Neo4jService:
     async def get_node_by_id(self, node_id: str) -> dict | None:
         """
         Retrieve a single node by its id property.
-bind = Super+Shift, S, exec, hyprshot -m output -o ~/Pictures/Screenshots # Capture region (freeze)
 
         Cypher explanation:
             MATCH (n {id: $id})  finds any node (any label) with this id.
@@ -235,7 +234,6 @@ bind = Super+Shift, S, exec, hyprshot -m output -o ~/Pictures/Screenshots # Capt
         driver = self._require_driver()
         async with driver.session() as session:
             result = await session.run(cypher, id=activity_id)
-
             record = await result.single()
 
         if record is None:
@@ -244,11 +242,161 @@ bind = Super+Shift, S, exec, hyprshot -m output -o ~/Pictures/Screenshots # Capt
         activity = dict(record["activity"])
         rels = [r for r in record["relationships"] if r["target_id"] is not None]
 
+        # Construct ready-to-render graph topology for UI
+        nodes = [{
+            "id": activity.get("id", activity_id),
+            "name": activity.get("name", f"NIC {nic_code}"),
+            "label": "Activity",
+            "properties": activity,
+        }]
+        links = []
+        for r in rels:
+            nodes.append({
+                "id": r["target_id"],
+                "name": r["target_name"],
+                "label": r["target_label"],
+                "properties": {"id": r["target_id"], "name": r["target_name"]},
+            })
+            links.append({
+                "source": activity.get("id", activity_id),
+                "target": r["target_id"],
+                "type": r["rel_type"],
+            })
+
         return {
             "nic_code":      nic_code,
             "activity":      activity,
             "relationships": rels,
+            "graph": {
+                "nodes": nodes,
+                "links": links,
+            },
         }
+
+    async def get_topology(self, limit: int = 150) -> dict:
+        """
+        Fetches a snapshot of the graph topology (nodes and edges) for the interactive visualizer.
+        """
+        cypher = """
+        MATCH (n)
+        WITH n LIMIT $limit
+        OPTIONAL MATCH (n)-[r]->(m)
+        RETURN
+            n.id AS source_id,
+            labels(n)[0] AS source_label,
+            n.name AS source_name,
+            properties(n) AS source_props,
+            type(r) AS rel_type,
+            m.id AS target_id,
+            labels(m)[0] AS target_label,
+            m.name AS target_name,
+            properties(m) AS target_props
+        """
+        driver = self._require_driver()
+        async with driver.session() as session:
+            result = await session.run(cypher, limit=limit)
+            records = await result.data()
+
+        nodes_dict = {}
+        links = []
+        link_keys = set()
+
+        for row in records:
+            s_id = row.get("source_id")
+            if s_id and s_id not in nodes_dict:
+                nodes_dict[s_id] = {
+                    "id": s_id,
+                    "label": row.get("source_label") or "Activity",
+                    "name": row.get("source_name") or s_id,
+                    "properties": row.get("source_props") or {},
+                }
+
+            t_id = row.get("target_id")
+            rel_type = row.get("rel_type")
+            if t_id and rel_type:
+                if t_id not in nodes_dict:
+                    nodes_dict[t_id] = {
+                        "id": t_id,
+                        "label": row.get("target_label") or "Entity",
+                        "name": row.get("target_name") or t_id,
+                        "properties": row.get("target_props") or {},
+                    }
+                link_key = (s_id, t_id, rel_type)
+                if link_key not in link_keys:
+                    link_keys.add(link_key)
+                    links.append({
+                        "source": s_id,
+                        "target": t_id,
+                        "type": rel_type,
+                    })
+
+        return {
+            "total_nodes": len(nodes_dict),
+            "total_links": len(links),
+            "nodes": list(nodes_dict.values()),
+            "links": links,
+        }
+
+    async def get_node_neighbors(self, node_id: str) -> dict:
+        """
+        Fetches immediate 1-hop connections (both incoming and outgoing) for a specific node.
+        """
+        cypher = """
+        MATCH (center {id: $id})-[r]-(neighbor)
+        RETURN
+            center.id AS center_id,
+            labels(center)[0] AS center_label,
+            center.name AS center_name,
+            properties(center) AS center_props,
+            startNode(r).id AS source_id,
+            endNode(r).id AS target_id,
+            type(r) AS rel_type,
+            neighbor.id AS neighbor_id,
+            labels(neighbor)[0] AS neighbor_label,
+            neighbor.name AS neighbor_name,
+            properties(neighbor) AS neighbor_props
+        """
+        driver = self._require_driver()
+        async with driver.session() as session:
+            result = await session.run(cypher, id=node_id)
+            records = await result.data()
+
+        nodes_dict = {}
+        links = []
+        link_keys = set()
+
+        for row in records:
+            c_id = row.get("center_id")
+            if c_id and c_id not in nodes_dict:
+                nodes_dict[c_id] = {
+                    "id": c_id,
+                    "label": row.get("center_label") or "Activity",
+                    "name": row.get("center_name") or c_id,
+                    "properties": row.get("center_props") or {},
+                }
+            n_id = row.get("neighbor_id")
+            if n_id and n_id not in nodes_dict:
+                nodes_dict[n_id] = {
+                    "id": n_id,
+                    "label": row.get("neighbor_label") or "Entity",
+                    "name": row.get("neighbor_name") or n_id,
+                    "properties": row.get("neighbor_props") or {},
+                }
+            s_id = row.get("source_id")
+            t_id = row.get("target_id")
+            rel = row.get("rel_type")
+            if s_id and t_id and rel:
+                key = (s_id, t_id, rel)
+                if key not in link_keys:
+                    link_keys.add(key)
+                    links.append({"source": s_id, "target": t_id, "type": rel})
+
+        return {
+            "node_id": node_id,
+            "nodes": list(nodes_dict.values()),
+            "links": links,
+        }
+
 
     async def search_nodes_by_name(self, query: str) -> list[dict]:
         """
